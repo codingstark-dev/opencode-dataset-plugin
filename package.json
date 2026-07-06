@@ -1,13 +1,16 @@
 {
   "name": "opencode-dataset-plugin",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "OpenCode plugin and OpenTUI review CLI for collecting fine-tuning datasets.",
+  "main": "dist/index.js",
   "module": "dist/index.js",
   "type": "module",
   "exports": {
-    ".": "./dist/index.js"
+    ".": "./dist/index.js",
+    "./server": "./dist/index.js"
   },
   "bin": {
+    "opencode-dataset-plugin": "./dist/index.js",
     "opencode-dataset": "./dist/index.js"
   },
   "files": [
