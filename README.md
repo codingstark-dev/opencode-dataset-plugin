@@ -1,8 +1,14 @@
-# opencode-dataset-plugin
+# opencode-dataset
 
 Capture OpenCode agent sessions into a local JSONL dataset, review examples in an OpenTUI terminal UI, and export to the formats LLM researchers actually use.
 
 ## Fast path
+
+Install once:
+
+```sh
+opencode plugin opencode-dataset
+```
 
 Add the plugin to `opencode.json`:
 
@@ -11,7 +17,7 @@ Add the plugin to `opencode.json`:
   "$schema": "https://opencode.ai/config.json",
   "plugin": [
     [
-      "opencode-dataset-plugin",
+      "opencode-dataset",
       {
         "datasetPath": ".opencode/datasets/opencode-dataset.jsonl"
       }
@@ -19,6 +25,8 @@ Add the plugin to `opencode.json`:
   ]
 }
 ```
+
+The older `opencode-dataset-plugin` package name also works, but `opencode-dataset` is the shorter recommended name.
 
 OpenCode installs npm plugins with Bun at startup. Captured records are written as newline-delimited JSON so they are easy to diff, stream, and load with Hugging Face Datasets:
 
@@ -43,7 +51,7 @@ Secrets are redacted before storage for common API keys, bearer tokens, GitHub t
 Run the OpenTUI review surface:
 
 ```sh
-bunx opencode-dataset-plugin review --path .opencode/datasets/opencode-dataset.jsonl
+bunx opencode-dataset review --path .opencode/datasets/opencode-dataset.jsonl
 ```
 
 Keys:
@@ -56,7 +64,7 @@ Keys:
 For CI or quick checks:
 
 ```sh
-bunx opencode-dataset-plugin review --once --path .opencode/datasets/opencode-dataset.jsonl
+bunx opencode-dataset review --once --path .opencode/datasets/opencode-dataset.jsonl
 ```
 
 ## Export
@@ -64,10 +72,10 @@ bunx opencode-dataset-plugin review --once --path .opencode/datasets/opencode-da
 Accepted records export by default. Add `--include-pending` when you want a quick raw dump before review.
 
 ```sh
-bunx opencode-dataset-plugin export --format openai --path .opencode/datasets/opencode-dataset.jsonl > train.openai.jsonl
-bunx opencode-dataset-plugin export --format alpaca --path .opencode/datasets/opencode-dataset.jsonl > train.alpaca.jsonl
-bunx opencode-dataset-plugin export --format sharegpt --path .opencode/datasets/opencode-dataset.jsonl > train.sharegpt.jsonl
-bunx opencode-dataset-plugin export --format dpo --path .opencode/datasets/opencode-dataset.jsonl > train.dpo.jsonl
+bunx opencode-dataset export --format openai --path .opencode/datasets/opencode-dataset.jsonl > train.openai.jsonl
+bunx opencode-dataset export --format alpaca --path .opencode/datasets/opencode-dataset.jsonl > train.alpaca.jsonl
+bunx opencode-dataset export --format sharegpt --path .opencode/datasets/opencode-dataset.jsonl > train.sharegpt.jsonl
+bunx opencode-dataset export --format dpo --path .opencode/datasets/opencode-dataset.jsonl > train.dpo.jsonl
 ```
 
 Formats:
