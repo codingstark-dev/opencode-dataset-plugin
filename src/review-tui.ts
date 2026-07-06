@@ -4,24 +4,42 @@ import {
   createCliRenderer,
   TextRenderable,
 } from "@opentui/core"
-import type { DatasetRecord } from "./schema.js"
+import { assertNever, type DatasetRecord } from "./schema.js"
+import {
+  createInitialReviewState,
+  formatReviewBody,
+  formatReviewTitle,
+  moveReviewSelection,
+  nextStateAfterStatusChange,
+  replaceRecord,
+  selectReviewRecords,
+  toggleReviewMode,
+} from "./review-state.js"
 import { updateRecordStatus } from "./storage.js"
 
-type ReviewState = {
-  selectedIndex: number
-}
+export {
+  createInitialReviewState,
+  formatRecord,
+  formatReviewBody,
+  formatReviewTitle,
+  moveReviewSelection,
+  replaceRecord,
+  selectReviewRecords,
+  toggleReviewMode,
+} from "./review-state.js"
+export type { ReviewMode, ReviewState, ReviewView } from "./review-state.js"
 
 export async function openReviewTui(
   datasetPath: string,
   records: readonly DatasetRecord[],
 ): Promise<void> {
-  const reviewable = records.filter((record) => record.status === "pending")
+  let allRecords = [...records]
+  let state = createInitialReviewState(allRecords)
   const renderer = await createCliRenderer({
     exitOnCtrlC: true,
     clearOnShutdown: true,
   })
 
-  const state: ReviewState = { selectedIndex: 0 }
   const shell = new BoxRenderable(renderer, {
     width: "100%",
     height: "100%",
@@ -43,7 +61,7 @@ export async function openReviewTui(
     flexGrow: 1,
   })
   const footer = new TextRenderable(renderer, {
-    content: "j/k move  a accept  r reject  q quit",
+    content: "j/k move  a accept  r reject  t pending/all  q quit",
     fg: "#a3a3a3",
     height: 1,
   })
@@ -54,13 +72,11 @@ export async function openReviewTui(
   renderer.root.add(shell)
 
   const render = () => {
-    const total = reviewable.length
-    const selected = reviewable[state.selectedIndex]
-    title.content =
-      total === 0
-        ? `No pending records in ${datasetPath}`
-        : `Pending ${state.selectedIndex + 1}/${total}  ${selected?.kind ?? ""}`
-    body.content = selected === undefined ? "All records have been reviewed." : formatRecord(selected)
+    const visibleRecords = selectReviewRecords(allRecords, state.mode)
+    const selected = visibleRecords[state.selectedIndex]
+    const view = { datasetPath, records: allRecords, state, selected }
+    title.content = formatReviewTitle(view)
+    body.content = formatReviewBody(view)
     renderer.requestRender()
   }
 
@@ -71,28 +87,50 @@ export async function openReviewTui(
       renderer.destroy()
       return
     }
-    if (reviewable.length === 0) {
+    if (key.name === "t" || key.name === "tab") {
+      state = toggleReviewMode(allRecords, state)
+      render()
+      return
+    }
+
+    const visibleRecords = selectReviewRecords(allRecords, state.mode)
+    if (visibleRecords.length === 0) {
       return
     }
     if (key.name === "j" || key.name === "down") {
-      state.selectedIndex = Math.min(state.selectedIndex + 1, reviewable.length - 1)
+      state = moveReviewSelection(state, visibleRecords.length, 1)
       render()
       return
     }
     if (key.name === "k" || key.name === "up") {
-      state.selectedIndex = Math.max(state.selectedIndex - 1, 0)
+      state = moveReviewSelection(state, visibleRecords.length, -1)
       render()
       return
     }
     if (key.name === "a" || key.name === "r") {
-      const selected = reviewable[state.selectedIndex]
+      const selected = visibleRecords[state.selectedIndex]
       if (selected === undefined) {
         return
       }
       void updateRecordStatus(datasetPath, selected.id, key.name === "a" ? "accepted" : "rejected").then(
-        () => {
-          reviewable.splice(state.selectedIndex, 1)
-          state.selectedIndex = Math.max(0, Math.min(state.selectedIndex, reviewable.length - 1))
+        (result) => {
+          switch (result.kind) {
+            case "updated": {
+              allRecords = replaceRecord(allRecords, result.record)
+              state = nextStateAfterStatusChange(allRecords, state)
+              render()
+              return
+            }
+            case "missing":
+              body.content = `Record no longer exists: ${selected.id}`
+              renderer.requestRender()
+              return
+            default:
+              assertNever(result)
+          }
+        },
+        (error: unknown) => {
+          body.content = `Could not update record: ${formatUnknownError(error)}`
           render()
         },
       )
@@ -104,28 +142,9 @@ export async function openReviewTui(
   })
 }
 
-export function formatRecord(record: DatasetRecord): string {
-  const lines = [
-    `id: ${record.id}`,
-    `kind: ${record.kind}`,
-    `session: ${record.sessionID}`,
-    `tags: ${record.tags.join(", ") || "none"}`,
-    "",
-    "instruction:",
-    clip(record.instruction ?? "(none)", 1_200),
-    "",
-    "input:",
-    clip(record.input ?? "(none)", 1_200),
-    "",
-    "output:",
-    clip(record.output ?? "(none)", 2_400),
-  ]
-  return lines.join("\n")
-}
-
-function clip(value: string, maxLength: number): string {
-  if (value.length <= maxLength) {
-    return value
+function formatUnknownError(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message
   }
-  return `${value.slice(0, maxLength)}\n...[truncated ${value.length - maxLength} chars]`
+  return "unknown error"
 }

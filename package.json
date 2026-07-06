@@ -1,6 +1,6 @@
 {
   "name": "opencode-dataset",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "OpenCode plugin and OpenTUI review CLI for collecting fine-tuning datasets.",
   "main": "dist/index.js",
   "module": "dist/index.js",

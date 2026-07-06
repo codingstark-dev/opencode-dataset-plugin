@@ -188,11 +188,143 @@ var init_storage = __esm(() => {
   init_schema();
 });
 
+// src/review-state.ts
+function createInitialReviewState(records) {
+  return {
+    mode: countStatus(records, "pending") > 0 ? "pending" : "all",
+    selectedIndex: 0
+  };
+}
+function selectReviewRecords(records, mode) {
+  switch (mode) {
+    case "pending":
+      return records.filter((record) => record.status === "pending");
+    case "all":
+      return records;
+    default:
+      assertNever(mode);
+  }
+}
+function toggleReviewMode(records, state) {
+  const mode = state.mode === "pending" ? "all" : "pending";
+  return clampReviewState({ mode, selectedIndex: state.selectedIndex }, selectReviewRecords(records, mode).length);
+}
+function moveReviewSelection(state, visibleCount, delta) {
+  return clampReviewState({
+    ...state,
+    selectedIndex: state.selectedIndex + delta
+  }, visibleCount);
+}
+function nextStateAfterStatusChange(records, state) {
+  const visibleRecords = selectReviewRecords(records, state.mode);
+  if (visibleRecords.length === 0 && records.length > 0 && state.mode === "pending") {
+    return { mode: "all", selectedIndex: 0 };
+  }
+  return clampReviewState(state, visibleRecords.length);
+}
+function replaceRecord(records, updatedRecord) {
+  return records.map((record) => record.id === updatedRecord.id ? updatedRecord : record);
+}
+function formatReviewTitle(view) {
+  if (view.records.length === 0) {
+    return `No records in ${view.datasetPath}`;
+  }
+  const visibleRecords = selectReviewRecords(view.records, view.state.mode);
+  if (view.selected === undefined) {
+    return `${formatMode(view.state.mode)} 0/${visibleRecords.length} | ${formatSummary(view.records)}`;
+  }
+  return `${formatMode(view.state.mode)} ${view.state.selectedIndex + 1}/${visibleRecords.length} | ${view.selected.status} ${view.selected.kind} | ${formatSummary(view.records)}`;
+}
+function formatReviewBody(view) {
+  if (view.records.length === 0) {
+    return [
+      "No dataset records yet.",
+      "",
+      "If you expected project data, run this from the project root or pass:",
+      "bunx opencode-dataset review --path /path/to/project/.opencode/datasets/opencode-dataset.jsonl"
+    ].join(`
+`);
+  }
+  if (view.selected === undefined && view.state.mode === "pending") {
+    return `No pending records.
+
+Press t to view accepted and rejected records.`;
+  }
+  return view.selected === undefined ? "No records in this view." : formatRecord(view.selected);
+}
+function formatRecord(record) {
+  const lines = [
+    `id: ${record.id}`,
+    `kind: ${record.kind}`,
+    `status: ${record.status}`,
+    `session: ${record.sessionID}`,
+    `tags: ${record.tags.join(", ") || "none"}`,
+    "",
+    "instruction:",
+    clip(record.instruction ?? "(none)", 1200),
+    "",
+    "input:",
+    clip(record.input ?? "(none)", 1200),
+    "",
+    "output:",
+    clip(record.output ?? "(none)", 2400)
+  ];
+  return lines.join(`
+`);
+}
+function clampReviewState(state, visibleCount) {
+  if (visibleCount <= 0) {
+    return { ...state, selectedIndex: 0 };
+  }
+  return {
+    ...state,
+    selectedIndex: Math.max(0, Math.min(state.selectedIndex, visibleCount - 1))
+  };
+}
+function formatSummary(records) {
+  return [
+    `total ${records.length}`,
+    `pending ${countStatus(records, "pending")}`,
+    `accepted ${countStatus(records, "accepted")}`,
+    `rejected ${countStatus(records, "rejected")}`
+  ].join(" | ");
+}
+function countStatus(records, status) {
+  return records.filter((record) => record.status === status).length;
+}
+function formatMode(mode) {
+  switch (mode) {
+    case "pending":
+      return "Pending";
+    case "all":
+      return "All records";
+    default:
+      assertNever(mode);
+  }
+}
+function clip(value, maxLength) {
+  if (value.length <= maxLength) {
+    return value;
+  }
+  return `${value.slice(0, maxLength)}
+...[truncated ${value.length - maxLength} chars]`;
+}
+var init_review_state = __esm(() => {
+  init_schema();
+});
+
 // src/review-tui.ts
 var exports_review_tui = {};
 __export(exports_review_tui, {
+  toggleReviewMode: () => toggleReviewMode,
+  selectReviewRecords: () => selectReviewRecords,
+  replaceRecord: () => replaceRecord,
   openReviewTui: () => openReviewTui,
-  formatRecord: () => formatRecord
+  moveReviewSelection: () => moveReviewSelection,
+  formatReviewTitle: () => formatReviewTitle,
+  formatReviewBody: () => formatReviewBody,
+  formatRecord: () => formatRecord,
+  createInitialReviewState: () => createInitialReviewState
 });
 import {
   BoxRenderable,
@@ -201,12 +333,12 @@ import {
   TextRenderable
 } from "@opentui/core";
 async function openReviewTui(datasetPath, records) {
-  const reviewable = records.filter((record) => record.status === "pending");
+  let allRecords = [...records];
+  let state = createInitialReviewState(allRecords);
   const renderer = await createCliRenderer({
     exitOnCtrlC: true,
     clearOnShutdown: true
   });
-  const state = { selectedIndex: 0 };
   const shell = new BoxRenderable(renderer, {
     width: "100%",
     height: "100%",
@@ -228,7 +360,7 @@ async function openReviewTui(datasetPath, records) {
     flexGrow: 1
   });
   const footer = new TextRenderable(renderer, {
-    content: "j/k move  a accept  r reject  q quit",
+    content: "j/k move  a accept  r reject  t pending/all  q quit",
     fg: "#a3a3a3",
     height: 1
   });
@@ -237,10 +369,11 @@ async function openReviewTui(datasetPath, records) {
   shell.add(footer);
   renderer.root.add(shell);
   const render = () => {
-    const total = reviewable.length;
-    const selected = reviewable[state.selectedIndex];
-    title.content = total === 0 ? `No pending records in ${datasetPath}` : `Pending ${state.selectedIndex + 1}/${total}  ${selected?.kind ?? ""}`;
-    body.content = selected === undefined ? "All records have been reviewed." : formatRecord(selected);
+    const visibleRecords = selectReviewRecords(allRecords, state.mode);
+    const selected = visibleRecords[state.selectedIndex];
+    const view = { datasetPath, records: allRecords, state, selected };
+    title.content = formatReviewTitle(view);
+    body.content = formatReviewBody(view);
     renderer.requestRender();
   };
   render();
@@ -249,27 +382,47 @@ async function openReviewTui(datasetPath, records) {
       renderer.destroy();
       return;
     }
-    if (reviewable.length === 0) {
+    if (key.name === "t" || key.name === "tab") {
+      state = toggleReviewMode(allRecords, state);
+      render();
+      return;
+    }
+    const visibleRecords = selectReviewRecords(allRecords, state.mode);
+    if (visibleRecords.length === 0) {
       return;
     }
     if (key.name === "j" || key.name === "down") {
-      state.selectedIndex = Math.min(state.selectedIndex + 1, reviewable.length - 1);
+      state = moveReviewSelection(state, visibleRecords.length, 1);
       render();
       return;
     }
     if (key.name === "k" || key.name === "up") {
-      state.selectedIndex = Math.max(state.selectedIndex - 1, 0);
+      state = moveReviewSelection(state, visibleRecords.length, -1);
       render();
       return;
     }
     if (key.name === "a" || key.name === "r") {
-      const selected = reviewable[state.selectedIndex];
+      const selected = visibleRecords[state.selectedIndex];
       if (selected === undefined) {
         return;
       }
-      updateRecordStatus(datasetPath, selected.id, key.name === "a" ? "accepted" : "rejected").then(() => {
-        reviewable.splice(state.selectedIndex, 1);
-        state.selectedIndex = Math.max(0, Math.min(state.selectedIndex, reviewable.length - 1));
+      updateRecordStatus(datasetPath, selected.id, key.name === "a" ? "accepted" : "rejected").then((result) => {
+        switch (result.kind) {
+          case "updated": {
+            allRecords = replaceRecord(allRecords, result.record);
+            state = nextStateAfterStatusChange(allRecords, state);
+            render();
+            return;
+          }
+          case "missing":
+            body.content = `Record no longer exists: ${selected.id}`;
+            renderer.requestRender();
+            return;
+          default:
+            assertNever(result);
+        }
+      }, (error) => {
+        body.content = `Could not update record: ${formatUnknownError(error)}`;
         render();
       });
     }
@@ -278,34 +431,17 @@ async function openReviewTui(datasetPath, records) {
     renderer.on(CliRenderEvents.DESTROY, () => resolve());
   });
 }
-function formatRecord(record) {
-  const lines = [
-    `id: ${record.id}`,
-    `kind: ${record.kind}`,
-    `session: ${record.sessionID}`,
-    `tags: ${record.tags.join(", ") || "none"}`,
-    "",
-    "instruction:",
-    clip(record.instruction ?? "(none)", 1200),
-    "",
-    "input:",
-    clip(record.input ?? "(none)", 1200),
-    "",
-    "output:",
-    clip(record.output ?? "(none)", 2400)
-  ];
-  return lines.join(`
-`);
-}
-function clip(value, maxLength) {
-  if (value.length <= maxLength) {
-    return value;
+function formatUnknownError(error) {
+  if (error instanceof Error) {
+    return error.message;
   }
-  return `${value.slice(0, maxLength)}
-...[truncated ${value.length - maxLength} chars]`;
+  return "unknown error";
 }
 var init_review_tui = __esm(() => {
+  init_schema();
+  init_review_state();
   init_storage();
+  init_review_state();
 });
 
 // src/exporters.ts

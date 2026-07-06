@@ -54,11 +54,14 @@ Run the OpenTUI review surface:
 bunx opencode-dataset review --path .opencode/datasets/opencode-dataset.jsonl
 ```
 
+When there are pending records, the TUI starts in pending review mode. When everything is already accepted or rejected, it opens in all-records mode so you can still inspect the dataset.
+
 Keys:
 
 - `j` / `k`: move
 - `a`: accept
 - `r`: reject
+- `t`: toggle pending/all records
 - `q`: quit
 
 For CI or quick checks:
